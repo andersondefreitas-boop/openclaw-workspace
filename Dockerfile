@@ -2,14 +2,15 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Instala OpenClaw
-RUN npm install -g openclaw
+# Copia package.json e instala dependências
+COPY package.json package-lock.json* ./
+RUN npm install
 
 # Copia workspace
 COPY . .
 
-# Expõe porta do gateway
+# Porta
 EXPOSE 3000
 
-# Inicia o gateway
-CMD ["openclaw", "gateway", "start"]
+# Inicia
+CMD ["npm", "start"]
