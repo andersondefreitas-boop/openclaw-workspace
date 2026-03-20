@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-03-20T04:18:54.636125",
+  "status": "executing",
+  "order": {
+    "coin": "TAO",
+    "sz": 30,
+    "leverage": 5,
+    "is_long": true,
+    "order_type": "market",
+    "tp": 310
+  },
+  "previous": "cancelled (10x exceeds max)"
+}

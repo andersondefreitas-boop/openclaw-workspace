@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Setups Consolidados — Trading</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"/>
+</head>
+<body style="margin:0;padding:0;">
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const setups = [
+  {
+    categoria: "Contexto Macro", timeframe: "Diário", tipo: "Swing", nome: "Golden Cross",
+    indicadores: "SMA 50 / SMA 200",
+    gatilho: "SMA 50 cruza acima da SMA 200",
+    confirmacao: "RSI entre 50 e 70",
+    saida: "Preço perde SMA 50 ou RSI < 70",
+    stop: "ATR 14 × 2.0 abaixo da entrada",
+    filtroHF: "N/A — é o próprio HF",
+    volume: "Volume > 80% média 20 candles",
+    score: 1, cor: "#6366f1",
+  },
+  {
+    categoria: "Swing Trade", timeframe: "4h", tipo: "Swing", nome: "Setup 9.1 (Larry Williams)",
+    indicadores: "EMA 9",
+    gatilho: "EMA 9 vira para cima + rompimento da máxima do candle de sinal",
+    confirmacao: "RSI > 50 no 4h",
+    saida: "EMA 9 vira para baixo ou RSI < 45",
+    stop: "ATR 14 × 1.5 abaixo da mínima do candle de sinal",
+    filtroHF: "Diário acima da SMA 50",
+    volume: "Volume > 70% média 20 candles",
+    score: 1, cor: "#10b981",
+  },
+  {
+    categoria: "Day Trade", timeframe: "1h", tipo: "Day", nome: "VWAP + EMA 9/20",
+    indicadores: "VWAP (reset 00h UTC) + EMA 9 + EMA 20",
+    gatilho: "Preço > VWAP + EMA 9 cruza acima da EMA 20 + RSI entre 40 e 70",
+    confirmacao: "RSI não sobrecomprado (< 70)",
+    saida: "Preço perde VWAP ou EMA 9 cruza abaixo da EMA 20",
+    stop: "ATR 14 × 1.5 abaixo da VWAP",
+    filtroHF: "4h acima da EMA 20",
+    volume: "Volume > 70% média 20 candles",
+    score: 1, cor: "#f59e0b",
+  },
+  {
+    categoria: "Day Trade", timeframe: "1h", tipo: "Day", nome: "Bollinger Squeeze (Power Breakout)",
+    indicadores: "Bollinger Bands 20 + Volume",
+    gatilho: "Bandas < 2% do preço (squeeze) + candle rompe banda superior com volume spike",
+    confirmacao: "Volume do candle > 150% da média 20",
+    saida: "Preço fecha abaixo da banda do meio (SMA 20)",
+    stop: "ATR 14 × 1.5 abaixo da banda inferior",
+    filtroHF: "4h acima da EMA 20",
+    volume: "Volume spike > 150% média 20 candles",
+    score: 1, cor: "#f59e0b",
+  },
+  {
+    categoria: "Filtro Universal", timeframe: "Higher TF", tipo: "Filtro", nome: "Tendência Higher Timeframe",
+    indicadores: "EMA 20 no TF superior",
+    gatilho: "Só operar long se TF superior estiver acima da EMA 20",
+    confirmacao: "—", saida: "—", stop: "—",
+    filtroHF: "Obrigatório em todos os setups",
+    volume: "—",
+    score: 0, cor: "#ec4899",
+  },
+  {
+    categoria: "Gestão de Risco", timeframe: "Todos", tipo: "Risco", nome: "ATR Stops Dinâmicos",
+    indicadores: "ATR 14",
+    gatilho: "Stop = Entrada − (Multiplicador × ATR 14)",
+    confirmacao: "Day Trade: ×1.5 | Swing: ×2.0",
+    saida: "Stop segue o preço (trailing opcional)",
+    stop: "Automático via ATR",
+    filtroHF: "—", volume: "—",
+    score: 0, cor: "#ef4444",
+  },
+  {
+    categoria: "Filtro Universal", timeframe: "Todos", tipo: "Filtro", nome: "Threshold de Volume",
+    indicadores: "Volume SMA 20",
+    gatilho: "Ignorar sinal se volume < 70% da média 20 candles",
+    confirmacao: "Spike exige > 150% para breakout",
+    saida: "—", stop: "—", filtroHF: "—",
+    volume: "Regra base de todos os setups",
+    score: 0, cor: "#8b5cf6",
+  },
+];
+
+const tipoCor = {
+  Swing:  { bg: "rgba(16,185,129,0.15)",  text: "#10b981", border: "rgba(16,185,129,0.3)" },
+  Day:    { bg: "rgba(245,158,11,0.15)",  text: "#f59e0b", border: "rgba(245,158,11,0.3)" },
+  Filtro: { bg: "rgba(236,72,153,0.15)",  text: "#ec4899", border: "rgba(236,72,153,0.3)" },
+  Risco:  { bg: "rgba(239,68,68,0.15)",   text: "#ef4444", border: "rgba(239,68,68,0.3)" },
+};
+
+const cols = [
+  { key: "categoria",   label: "Categoria" },
+  { key: "timeframe",   label: "Timeframe" },
+  { key: "nome",        label: "Setup" },
+  { key: "indicadores", label: "Indicadores" },
+  { key: "gatilho",     label: "Gatilho de Entrada" },
+  { key: "confirmacao", label: "Confirmação" },
+  { key: "saida",       label: "Saída" },
+  { key: "stop",        label: "🔴 Stop (ATR)" },
+  { key: "filtroHF",    label: "📊 Filtro HF" },
+  { key: "volume",      label: "📦 Volume Mín." },
+];
+
+function TradingTable() {
+  const [expanded, setExpanded] = useState(null);
+
+  return (
+    <div style={{
+      background: "#0a0e1a", minHeight: "100vh", padding: "32px 24px",
+      fontFamily: "'IBM Plex Mono', monospace", color: "#e2e8f0",
+    }}>
+      <style>{`
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { height: 6px; width: 6px; }
+        ::-webkit-scrollbar-track { background: #0a0e1a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        .row-hover { transition: background 0.15s; cursor: pointer; }
+        .row-hover:hover { background: rgba(255,255,255,0.06) !important; }
+        .expand-row { animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+        .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:600; letter-spacing:0.05em; border:1px solid; }
+      `}</style>
+
+      <div style={{ maxWidth: 1400, margin: "0 auto" }}>
+        {/* Header */}
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.2em", color: "#64748b", marginBottom: 8 }}>
+            SISTEMA DE TRADING / AUTOMAÇÃO BINANCE
+          </div>
+          <h1 style={{
+            fontFamily: "'Space Grotesk', sans-serif", fontSize: 28, fontWeight: 700, margin: 0,
+            background: "linear-gradient(90deg, #e2e8f0 0%, #94a3b8 100%)",
+            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          }}>
+            Setups Consolidados
+          </h1>
+          <p style={{ color: "#475569", fontSize: 12, marginTop: 8 }}>
+            Clique em qualquer linha para expandir os detalhes completos do setup
+          </p>
+        </div>
+
+        {/* Legend */}
+        <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
+          {Object.entries(tipoCor).map(([tipo, c]) => (
+            <span key={tipo} className="badge" style={{ background: c.bg, color: c.text, borderColor: c.border }}>
+              {tipo === "Filtro" ? "⚡ " : tipo === "Risco" ? "🔴 " : tipo === "Swing" ? "📈 " : "⚡ "}{tipo}
+            </span>
+          ))}
+          <span style={{ marginLeft: "auto", color: "#475569", fontSize: 11, alignSelf: "center" }}>
+            {setups.length} setups / regras carregados
+          </span>
+        </div>
+
+        {/* Score summary */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 32 }}>
+          {[
+            { label: "Setups Ativos",      val: "4",      sub: "com gatilho claro",    c: "#10b981" },
+            { label: "Filtros Universais", val: "3",      sub: "ATR + HF + Volume",    c: "#8b5cf6" },
+            { label: "Score Máx/Ativo",    val: "4 pts",  sub: "alerta ≥ 3",           c: "#f59e0b" },
+            { label: "Varredura",          val: "1h",     sub: "reset VWAP 00h UTC",   c: "#6366f1" },
+          ].map(item => (
+            <div key={item.label} style={{
+              background: "#0f1629", border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 8, padding: "14px 16px",
+            }}>
+              <div style={{ fontSize: 11, color: "#475569", letterSpacing: "0.1em", marginBottom: 4 }}>{item.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 600, color: item.c, fontFamily: "'Space Grotesk', sans-serif" }}>{item.val}</div>
+              <div style={{ fontSize: 10, color: "#334155", marginTop: 2 }}>{item.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Table */}
+        <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid rgba(255,255,255,0.07)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#0f1629", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                {cols.map(c => (
+                  <th key={c.key} style={{
+                    padding: "12px 16px", textAlign: "left", color: "#475569",
+                    fontWeight: 500, fontSize: 10, letterSpacing: "0.12em", whiteSpace: "nowrap",
+                  }}>
+                    {c.label.toUpperCase()}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {setups.map((setup, i) => {
+                const tc = tipoCor[setup.tipo];
+                const isExp = expanded === i;
+                return (
+                  <React.Fragment key={i}>
+                    <tr
+                      className="row-hover"
+                      onClick={() => setExpanded(isExp ? null : i)}
+                      style={{
+                        background: isExp ? "rgba(255,255,255,0.03)" : i % 2 === 0 ? "#0a0e1a" : "#0c1120",
+                        borderBottom: "1px solid rgba(255,255,255,0.05)",
+                        borderLeft: `3px solid ${setup.cor}`,
+                      }}
+                    >
+                      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
+                        <span className="badge" style={{ background: tc.bg, color: tc.text, borderColor: tc.border }}>
+                          {setup.categoria}
+                        </span>
+                      </td>
+                      <td style={{ padding: "14px 16px", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                        <code style={{ background: "rgba(255,255,255,0.05)", padding: "2px 6px", borderRadius: 3 }}>
+                          {setup.timeframe}
+                        </code>
+                      </td>
+                      <td style={{ padding: "14px 16px", fontWeight: 600, color: setup.cor, whiteSpace: "nowrap" }}>
+                        {setup.nome}
+                      </td>
+                      <td style={{ padding: "14px 16px", color: "#64748b", maxWidth: 180 }}>{setup.indicadores}</td>
+                      <td style={{ padding: "14px 16px", color: "#94a3b8", maxWidth: 240 }}>{setup.gatilho}</td>
+                      <td style={{ padding: "14px 16px", color: "#64748b", maxWidth: 180 }}>{setup.confirmacao}</td>
+                      <td style={{ padding: "14px 16px", color: "#64748b", maxWidth: 180 }}>{setup.saida}</td>
+                      <td style={{ padding: "14px 16px", color: "#ef4444", whiteSpace: "nowrap" }}>
+                        {setup.stop !== "—" ? `🔴 ${setup.stop}` : "—"}
+                      </td>
+                      <td style={{ padding: "14px 16px", color: "#ec4899", maxWidth: 160, fontSize: 11 }}>
+                        {setup.filtroHF !== "—" ? `📊 ${setup.filtroHF}` : "—"}
+                      </td>
+                      <td style={{ padding: "14px 16px", color: "#8b5cf6", maxWidth: 160, fontSize: 11 }}>
+                        {setup.volume !== "—" ? `📦 ${setup.volume}` : "—"}
+                      </td>
+                    </tr>
+                    {isExp && (
+                      <tr className="expand-row" style={{ background: "rgba(255,255,255,0.02)" }}>
+                        <td colSpan={10} style={{ padding: "20px 24px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+                            {[
+                              { label: "🎯 Gatilho Completo", val: setup.gatilho },
+                              { label: "✅ Confirmação",      val: setup.confirmacao },
+                              { label: "🚪 Saída",            val: setup.saida },
+                              { label: "🔴 Stop Loss (ATR)",  val: setup.stop },
+                              { label: "📊 Filtro HF",        val: setup.filtroHF },
+                              { label: "📦 Volume Mínimo",    val: setup.volume },
+                            ].map(item => (
+                              <div key={item.label} style={{
+                                background: "#0f1629", border: "1px solid rgba(255,255,255,0.07)",
+                                borderRadius: 8, padding: "12px 14px",
+                              }}>
+                                <div style={{ fontSize: 10, color: "#475569", letterSpacing: "0.1em", marginBottom: 6 }}>{item.label}</div>
+                                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>{item.val || "—"}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ marginTop: 16, color: "#1e293b", fontSize: 10, textAlign: "right" }}>
+          HRAVA · SEAMEP · UNIDAVI — Sistema de Automação Pessoal
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<TradingTable />);
+</script>
+</body>
+</html>

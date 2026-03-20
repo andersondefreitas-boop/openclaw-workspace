@@ -1,0 +1,5 @@
+{
+  "private_key": "0xSUA_CHAVE_PRIVADA_AQUI",
+  "api_url": "https://api.hyperliquid.xyz",
+  "wallet_address": "0xSEU_ENDERECO_AQUI"
+}

@@ -1,0 +1,20 @@
+# Secrets
+hl_config.json
+credentials.json
+token.json
+.env
+.env.local
+*_secret.json
+*.pem
+*.key
+
+# Cache
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+node_modules/
+
+# Logs
+*.log
+.git/
