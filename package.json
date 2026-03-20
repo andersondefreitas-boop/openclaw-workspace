@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-workspace",
+  "version": "1.0.0",
+  "description": "Workspace OpenClaw for Railway",
+  "scripts": {
+    "start": "openclaw gateway start"
+  },
+  "dependencies": {
+    "openclaw": "latest"
+  }
+}
