@@ -25,17 +25,33 @@ CLOB_WS   = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 async def get_active_btc_5min_market(session: aiohttp.ClientSession) -> Optional[dict]:
     """Retorna o mercado BTC de 5 minutos ativo agora."""
     try:
-        params = {"limit": 100, "active": "true", "closed": "false", "tag_slug": "crypto"}
-        async with session.get(f"{GAMMA_API}/markets", params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            data = await resp.json()
+        # Busca ampla primeiro — filtra pelo título depois
+        for tag in ["bitcoin", "crypto", ""]:
+            params = {"limit": 100, "active": "true", "closed": "false"}
+            if tag:
+                params["tag_slug"] = tag
+            async with session.get(
+                f"{GAMMA_API}/markets", params=params, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                data = await resp.json()
 
-        markets = data if isinstance(data, list) else data.get("markets", [])
+            markets = data if isinstance(data, list) else data.get("markets", [])
+            if not markets:
+                continue
 
-        for m in markets:
-            q = m.get("question", "").lower()
-            if "btc" in q and ("5-minute" in q or "5 minute" in q or "5min" in q):
-                return _parse_market(m)
+            for m in markets:
+                q = m.get("question", "").lower()
+                slug = m.get("slug", "").lower()
+                # Polymarket usa variações: "5-minute", "5 minute", "5min", "five minute"
+                is_5min = any(x in q or x in slug for x in [
+                    "5-minute", "5 minute", "5min", "five-minute", "five minute"
+                ])
+                is_btc = any(x in q or x in slug for x in ["btc", "bitcoin"])
+                if is_btc and is_5min:
+                    log.info(f"Mercado encontrado: {m.get('question', '')}")
+                    return _parse_market(m)
 
+        log.debug("Nenhum mercado BTC 5-min encontrado nas buscas")
         return None
     except Exception as e:
         log.error(f"get_active_btc_5min_market error: {e}")
@@ -92,6 +108,19 @@ def _extract_price_to_beat(question: str) -> Optional[float]:
 # ──────────────────────────────────────────────────────────────
 # ORDER BOOK
 # ──────────────────────────────────────────────────────────────
+
+async def list_crypto_markets(session: aiohttp.ClientSession, limit: int = 20) -> list:
+    """Retorna os primeiros mercados ativos de crypto — útil para diagnóstico."""
+    try:
+        params = {"limit": limit, "active": "true", "closed": "false", "tag_slug": "crypto"}
+        async with session.get(f"{GAMMA_API}/markets", params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            data = await resp.json()
+        markets = data if isinstance(data, list) else data.get("markets", [])
+        return [m.get("question", "") for m in markets]
+    except Exception as e:
+        log.error(f"list_crypto_markets error: {e}")
+        return []
+
 
 async def get_order_book(session: aiohttp.ClientSession, token_id: str) -> Optional[dict]:
     """Busca o order book via REST para um token específico."""

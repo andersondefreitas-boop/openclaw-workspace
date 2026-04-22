@@ -30,6 +30,7 @@ import requests
 
 from polymarket_client import (
     get_active_btc_5min_market,
+    list_crypto_markets,
     get_order_book,
     get_market_prices,
     subscribe_order_book,
@@ -136,11 +137,12 @@ def handle_telegram_update(update: dict) -> None:
     if cmd in ["/start", "/ajuda", "/help"]:
         tg_send(
             "🤖 <b>Polymarket BTC 5-min Bot</b>\n\n"
-            "/status  — PnL do dia e posição aberta\n"
-            "/stats   — Win rate e histórico\n"
-            "/pause   — Pausa novas entradas\n"
-            "/resume  — Retoma operações\n"
-            "/ajuda   — Esta mensagem\n\n"
+            "/status   — PnL do dia e posição aberta\n"
+            "/stats    — Win rate e histórico\n"
+            "/mercados — Lista mercados ativos na API\n"
+            "/pause    — Pausa novas entradas\n"
+            "/resume   — Retoma operações\n"
+            "/ajuda    — Esta mensagem\n\n"
             f"<i>DRY_RUN={'ON' if DRY_RUN else 'OFF'} | Banca: ${_state['bankroll']:.2f}</i>"
         )
 
@@ -185,6 +187,17 @@ def handle_telegram_update(update: dict) -> None:
             f"PnL acumulado: ${_state['daily_pnl']:+.2f}\n\n"
             f"<b>Últimos 10:</b>\n{recent_txt}"
         )
+
+    elif cmd == "/mercados":
+        async def _fetch_and_send():
+            async with aiohttp.ClientSession() as s:
+                markets = await list_crypto_markets(s, limit=20)
+            if not markets:
+                tg_send("Nenhum mercado crypto ativo encontrado na API.")
+                return
+            txt = "\n".join(f"• {q[:80]}" for q in markets[:15])
+            tg_send(f"<b>Mercados crypto ativos (Polymarket):</b>\n\n{txt}")
+        threading.Thread(target=lambda: asyncio.run(_fetch_and_send()), daemon=True).start()
 
     elif cmd == "/pause":
         _state["paused"] = True
