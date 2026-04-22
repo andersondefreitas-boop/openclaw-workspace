@@ -22,83 +22,73 @@ CLOB_WS   = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 # DESCOBERTA DE MERCADO
 # ──────────────────────────────────────────────────────────────
 
+MARKET_SLUG_BASE = "btc-updown-5m"
+
+
 async def get_active_btc_5min_market(session: aiohttp.ClientSession) -> Optional[dict]:
     """
-    Busca o mercado 'BTC 5 Minute Up or Down' ativo na Polymarket.
-    Tenta múltiplos endpoints e queries até encontrar.
+    Busca o mercado 'BTC 5 Minute Up or Down' ativo.
+    Slug pattern: btc-updown-5m-{timestamp}  — muda a cada 5 minutos.
     """
     try:
-        # Estratégia 1: busca por texto no Gamma API
-        for query in ["BTC 5 Minute", "BTC 5 Minute Up or Down", "5 Minute Up or Down"]:
-            try:
-                async with session.get(
-                    f"{GAMMA_API}/markets",
-                    params={"limit": 50, "active": "true", "closed": "false", "_q": query},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    data = await resp.json()
-                markets = data if isinstance(data, list) else data.get("markets", [])
-                for m in markets:
-                    if _is_btc_5min(m.get("question", "").lower(), m.get("slug", "").lower()):
-                        log.info(f"[Gamma/_q] Mercado: {m.get('question', '')}")
-                        return _parse_market(m)
-            except Exception as e:
-                log.debug(f"Gamma _q='{query}' failed: {e}")
-
-        # Estratégia 2: busca por tag slug (5-min, 5min, bitcoin)
-        for tag in ["5-min", "5min", "bitcoin", "crypto-prices"]:
-            try:
-                async with session.get(
-                    f"{GAMMA_API}/markets",
-                    params={"limit": 100, "active": "true", "closed": "false", "tag_slug": tag},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    data = await resp.json()
-                markets = data if isinstance(data, list) else data.get("markets", [])
-                for m in markets:
-                    if _is_btc_5min(m.get("question", "").lower(), m.get("slug", "").lower()):
-                        log.info(f"[Gamma/tag={tag}] Mercado: {m.get('question', '')}")
-                        return _parse_market(m)
-            except Exception as e:
-                log.debug(f"Gamma tag='{tag}' failed: {e}")
-
-        # Estratégia 3: busca por eventos no Gamma API
-        for query in ["BTC 5 Minute", "5 Minute Up or Down"]:
+        # Estratégia 1: buscar eventos com slug contendo o padrão base
+        for param in [{"slug": MARKET_SLUG_BASE}, {"_q": MARKET_SLUG_BASE}, {"q": MARKET_SLUG_BASE}]:
             try:
                 async with session.get(
                     f"{GAMMA_API}/events",
-                    params={"limit": 50, "active": "true", "closed": "false", "_q": query},
+                    params={"active": "true", "closed": "false", "limit": 10, **param},
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     data = await resp.json()
                 events = data if isinstance(data, list) else data.get("events", [])
                 for ev in events:
-                    q = ev.get("title", ev.get("question", "")).lower()
-                    slug = ev.get("slug", "").lower()
-                    if _is_btc_5min(q, slug):
-                        log.info(f"[Gamma/events] Evento: {ev.get('title', '')}")
-                        # eventos têm sub-mercados
+                    slug = ev.get("slug", "")
+                    if MARKET_SLUG_BASE in slug:
+                        log.info(f"[events] Encontrado via {param}: {slug}")
                         markets = ev.get("markets", [])
                         if markets:
-                            return _parse_market(markets[0])
+                            return _parse_market(markets[0], event=ev)
+                        return _parse_market(ev)
             except Exception as e:
-                log.debug(f"Gamma events _q='{query}' failed: {e}")
+                log.debug(f"events {param} failed: {e}")
 
-        # Estratégia 4: varrer todos os mercados Bitcoin no Gamma
+        # Estratégia 2: construir slug com timestamp atual arredondado a 5 min
+        now = int(time.time())
+        for offset in [0, 300, -300, 600, -600]:
+            candidate_ts = (now + offset) // 300 * 300
+            slug = f"{MARKET_SLUG_BASE}-{candidate_ts}"
+            try:
+                async with session.get(
+                    f"{GAMMA_API}/events",
+                    params={"slug": slug},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    data = await resp.json()
+                events = data if isinstance(data, list) else data.get("events", [])
+                if events:
+                    ev = events[0]
+                    log.info(f"[slug] Encontrado: {slug}")
+                    markets = ev.get("markets", [])
+                    if markets:
+                        return _parse_market(markets[0], event=ev)
+                    return _parse_market(ev)
+            except Exception as e:
+                log.debug(f"slug {slug} failed: {e}")
+
+        # Estratégia 3: buscar mercados com o slug base diretamente
         try:
             async with session.get(
                 f"{GAMMA_API}/markets",
-                params={"limit": 100, "active": "true", "closed": "false", "tag_slug": "bitcoin"},
-                timeout=aiohttp.ClientTimeout(total=10),
+                params={"slug": MARKET_SLUG_BASE, "active": "true", "limit": 5},
+                timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 data = await resp.json()
             markets = data if isinstance(data, list) else data.get("markets", [])
-            log.info(f"[Gamma/bitcoin] {len(markets)} mercados. Primeiros: {[m.get('question','')[:40] for m in markets[:5]]}")
-            for m in markets:
-                if _is_btc_5min(m.get("question", "").lower(), m.get("slug", "").lower()):
-                    return _parse_market(m)
+            if markets:
+                log.info(f"[markets/slug] Encontrado: {markets[0].get('slug', '')}")
+                return _parse_market(markets[0])
         except Exception as e:
-            log.debug(f"Gamma bitcoin tag failed: {e}")
+            log.debug(f"markets/slug failed: {e}")
 
         log.info("Nenhum mercado BTC 5-min ativo encontrado — aguardando 30s")
         return None
@@ -107,18 +97,7 @@ async def get_active_btc_5min_market(session: aiohttp.ClientSession) -> Optional
         return None
 
 
-def _is_btc_5min(question: str, slug: str) -> bool:
-    """Verifica se é o mercado BTC 5 Minute Up or Down."""
-    combined = question + " " + slug
-    is_btc = any(x in combined for x in ["btc", "bitcoin"])
-    is_5min = any(x in combined for x in [
-        "5-minute", "5 minute", "5min", "five-minute", "five minute",
-        "5-min", "5 min", "up or down",
-    ])
-    return is_btc and is_5min
-
-
-def _parse_market(raw: dict) -> dict:
+def _parse_market(raw: dict, event: dict = None) -> dict:
     """Normaliza o objeto de mercado para uso interno."""
     outcomes  = raw.get("outcomes", ["YES", "NO"])
     token_ids = raw.get("clob_token_ids", [None, None])
@@ -170,33 +149,46 @@ def _extract_price_to_beat(question: str) -> Optional[float]:
 # ──────────────────────────────────────────────────────────────
 
 async def list_crypto_markets(session: aiohttp.ClientSession, limit: int = 20) -> list:
-    """Busca mercados Bitcoin ativos — para diagnóstico."""
+    """Diagnóstico: busca o mercado btc-updown-5m via slug e eventos."""
     results = []
-    try:
-        async with session.get(
-            f"{GAMMA_API}/markets",
-            params={"active": "true", "closed": "false", "limit": limit, "tag_slug": "bitcoin"},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            data = await resp.json()
-        markets = data if isinstance(data, list) else data.get("markets", [])
-        results += [f"[Bitcoin] {m.get('question', '?')}" for m in markets[:10]]
-    except Exception as e:
-        results.append(f"[Bitcoin erro] {e}")
+    now = int(time.time())
 
-    try:
-        async with session.get(
-            f"{GAMMA_API}/events",
-            params={"active": "true", "closed": "false", "limit": 10, "_q": "BTC 5"},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            data = await resp.json()
-        events = data if isinstance(data, list) else data.get("events", [])
-        results += [f"[Event] {e.get('title', e.get('question', '?'))}" for e in events[:5]]
-    except Exception as e:
-        results.append(f"[Events erro] {e}")
+    # Tenta slugs com timestamps próximos
+    for offset in [0, 300, -300, 600]:
+        ts = (now + offset) // 300 * 300
+        slug = f"{MARKET_SLUG_BASE}-{ts}"
+        try:
+            async with session.get(
+                f"{GAMMA_API}/events",
+                params={"slug": slug},
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as resp:
+                data = await resp.json()
+            events = data if isinstance(data, list) else data.get("events", [])
+            if events:
+                ev = events[0]
+                results.append(f"[FOUND slug={slug}] {ev.get('title', ev.get('question', '?'))}")
+            else:
+                results.append(f"[vazio slug={slug}]")
+        except Exception as e:
+            results.append(f"[erro slug={slug}] {e}")
 
-    return results
+    # Busca genérica por texto
+    for q in ["btc-updown", "BTC 5 Minute", "up or down"]:
+        try:
+            async with session.get(
+                f"{GAMMA_API}/events",
+                params={"_q": q, "active": "true", "limit": 3},
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as resp:
+                data = await resp.json()
+            events = data if isinstance(data, list) else data.get("events", [])
+            for ev in events:
+                results.append(f"[_q={q}] slug={ev.get('slug','')} | {ev.get('title','?')[:60]}")
+        except Exception as e:
+            results.append(f"[_q={q} erro] {e}")
+
+    return results or ["Nenhum resultado encontrado"]
 
 
 async def get_order_book(session: aiohttp.ClientSession, token_id: str) -> Optional[dict]:
