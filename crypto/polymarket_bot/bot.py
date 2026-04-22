@@ -322,6 +322,19 @@ async def run_market_cycle(session: aiohttp.ClientSession, client) -> None:
 
     # 3. Coletar sinais
     prices = await get_external_prices(session)
+
+    # Se price_to_beat não veio no market data, usa preço atual da Binance
+    if market.get("price_to_beat") is None:
+        btc_price = prices.get("binance") or prices.get("coinbase")
+        if btc_price:
+            market["price_to_beat"] = round(btc_price, 2)
+            log.info(f"price_to_beat não encontrado no market — usando Binance: ${btc_price:,.2f}")
+        else:
+            log.warning("Sem price_to_beat e sem preço externo — pulando")
+            _state["skipped"] += 1
+            await asyncio.sleep(max(0, market["resolution_time"] - time.time()) + 5)
+            return
+
     up_book = await get_order_book(session, market["up_token"]) if market.get("up_token") else {}
 
     imbalance_now = calculate_imbalance(up_book or {})

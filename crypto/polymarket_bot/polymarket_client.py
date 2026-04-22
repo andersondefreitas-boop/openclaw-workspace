@@ -107,7 +107,18 @@ def _parse_market(raw: dict, event: dict = None) -> dict:
         except Exception:
             token_ids = [None, None]
 
-    end_ts = raw.get("end_date_iso") or raw.get("endDate")
+    # Tenta extrair token_ids do evento pai se não vier no market
+    if (not token_ids or token_ids == [None, None]) and event:
+        ev_tokens = event.get("clob_token_ids", [None, None])
+        if isinstance(ev_tokens, str):
+            try:
+                ev_tokens = json.loads(ev_tokens)
+            except Exception:
+                ev_tokens = [None, None]
+        token_ids = ev_tokens
+
+    end_ts = (raw.get("end_date_iso") or raw.get("endDate") or
+              (event or {}).get("end_date_iso") or (event or {}).get("endDate"))
     if end_ts:
         from datetime import datetime, timezone
         try:
@@ -122,14 +133,32 @@ def _parse_market(raw: dict, event: dict = None) -> dict:
     else:
         resolution_time = time.time() + 300
 
+    # price_to_beat: tenta extrair do texto, depois de outros campos
+    question = raw.get("question", "") or (event or {}).get("title", "")
+    ptb = (
+        _extract_price_to_beat(question) or
+        _extract_price_to_beat(raw.get("description", "")) or
+        raw.get("startPrice") or
+        raw.get("start_price") or
+        (event or {}).get("startPrice") or
+        None  # será preenchido com preço Binance no ciclo
+    )
+    if ptb is not None:
+        try:
+            ptb = float(ptb)
+        except (TypeError, ValueError):
+            ptb = None
+
+    log.debug(f"_parse_market: question='{question[:60]}' ptb={ptb} tokens={token_ids}")
+
     return {
-        "id":              raw.get("id") or raw.get("conditionId", ""),
-        "question":        raw.get("question", ""),
-        "price_to_beat":   _extract_price_to_beat(raw.get("question", "")),
+        "id":              raw.get("id") or raw.get("conditionId", "") or (event or {}).get("id", ""),
+        "question":        question,
+        "price_to_beat":   ptb,
         "resolution_time": resolution_time,
         "elapsed_seconds": max(0, time.time() - (resolution_time - 300)),
-        "up_token":        token_ids[0] if len(token_ids) > 0 else None,
-        "down_token":      token_ids[1] if len(token_ids) > 1 else None,
+        "up_token":        token_ids[0] if token_ids and len(token_ids) > 0 else None,
+        "down_token":      token_ids[1] if token_ids and len(token_ids) > 1 else None,
         "outcomes":        outcomes,
         "raw":             raw,
     }
