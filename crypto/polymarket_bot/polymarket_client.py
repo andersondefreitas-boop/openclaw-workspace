@@ -24,58 +24,12 @@ CLOB_WS   = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 async def get_active_btc_5min_market(session: aiohttp.ClientSession) -> Optional[dict]:
     """
-    Busca mercado BTC de 5 minutos ativo.
-    Tenta 3 estratégias em sequência:
-      1. CLOB API com filtro por slug/keyword "btc"
-      2. Gamma API buscando por end_date próximo (mercados de curta duração)
-      3. Gamma API com query de texto
+    Busca o mercado 'BTC 5 Minute Up or Down' ativo na Polymarket.
+    Tenta múltiplos endpoints e queries até encontrar.
     """
     try:
-        # Estratégia 1: CLOB API — busca por mercados BTC ativos
-        try:
-            async with session.get(
-                f"{CLOB_API}/markets",
-                params={"active": "true", "closed": "false", "limit": 100},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                clob_data = await resp.json()
-            clob_markets = clob_data if isinstance(clob_data, list) else clob_data.get("data", [])
-            for m in clob_markets:
-                q = m.get("question", "").lower()
-                slug = m.get("market_slug", m.get("slug", "")).lower()
-                if _is_btc_5min(q, slug):
-                    log.info(f"[CLOB] Mercado: {m.get('question', '')}")
-                    return _parse_market(m)
-        except Exception as e:
-            log.debug(f"CLOB search failed: {e}")
-
-        # Estratégia 2: Gamma API — mercados com end_date nos próximos 10 minutos
-        now = int(time.time())
-        end_max = now + 600
-        try:
-            async with session.get(
-                f"{GAMMA_API}/markets",
-                params={
-                    "limit": 100,
-                    "active": "true",
-                    "closed": "false",
-                    "end_date_max": end_max,
-                },
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                data = await resp.json()
-            markets = data if isinstance(data, list) else data.get("markets", [])
-            for m in markets:
-                q = m.get("question", "").lower()
-                slug = m.get("slug", "").lower()
-                if _is_btc_5min(q, slug):
-                    log.info(f"[Gamma/enddate] Mercado: {m.get('question', '')}")
-                    return _parse_market(m)
-        except Exception as e:
-            log.debug(f"Gamma end_date search failed: {e}")
-
-        # Estratégia 3: Gamma API com busca por texto
-        for query in ["BTC 5", "Bitcoin 5-minute", "BTC above", "BTC below"]:
+        # Estratégia 1: busca por texto no Gamma API
+        for query in ["BTC 5 Minute", "BTC 5 Minute Up or Down", "5 Minute Up or Down"]:
             try:
                 async with session.get(
                     f"{GAMMA_API}/markets",
@@ -85,15 +39,68 @@ async def get_active_btc_5min_market(session: aiohttp.ClientSession) -> Optional
                     data = await resp.json()
                 markets = data if isinstance(data, list) else data.get("markets", [])
                 for m in markets:
-                    q = m.get("question", "").lower()
-                    slug = m.get("slug", "").lower()
-                    if _is_btc_5min(q, slug):
-                        log.info(f"[Gamma/query] Mercado: {m.get('question', '')}")
+                    if _is_btc_5min(m.get("question", "").lower(), m.get("slug", "").lower()):
+                        log.info(f"[Gamma/_q] Mercado: {m.get('question', '')}")
                         return _parse_market(m)
             except Exception as e:
-                log.debug(f"Gamma query '{query}' failed: {e}")
+                log.debug(f"Gamma _q='{query}' failed: {e}")
 
-        log.debug("Nenhum mercado BTC 5-min ativo encontrado")
+        # Estratégia 2: busca por tag slug (5-min, 5min, bitcoin)
+        for tag in ["5-min", "5min", "bitcoin", "crypto-prices"]:
+            try:
+                async with session.get(
+                    f"{GAMMA_API}/markets",
+                    params={"limit": 100, "active": "true", "closed": "false", "tag_slug": tag},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    data = await resp.json()
+                markets = data if isinstance(data, list) else data.get("markets", [])
+                for m in markets:
+                    if _is_btc_5min(m.get("question", "").lower(), m.get("slug", "").lower()):
+                        log.info(f"[Gamma/tag={tag}] Mercado: {m.get('question', '')}")
+                        return _parse_market(m)
+            except Exception as e:
+                log.debug(f"Gamma tag='{tag}' failed: {e}")
+
+        # Estratégia 3: busca por eventos no Gamma API
+        for query in ["BTC 5 Minute", "5 Minute Up or Down"]:
+            try:
+                async with session.get(
+                    f"{GAMMA_API}/events",
+                    params={"limit": 50, "active": "true", "closed": "false", "_q": query},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    data = await resp.json()
+                events = data if isinstance(data, list) else data.get("events", [])
+                for ev in events:
+                    q = ev.get("title", ev.get("question", "")).lower()
+                    slug = ev.get("slug", "").lower()
+                    if _is_btc_5min(q, slug):
+                        log.info(f"[Gamma/events] Evento: {ev.get('title', '')}")
+                        # eventos têm sub-mercados
+                        markets = ev.get("markets", [])
+                        if markets:
+                            return _parse_market(markets[0])
+            except Exception as e:
+                log.debug(f"Gamma events _q='{query}' failed: {e}")
+
+        # Estratégia 4: varrer todos os mercados Bitcoin no Gamma
+        try:
+            async with session.get(
+                f"{GAMMA_API}/markets",
+                params={"limit": 100, "active": "true", "closed": "false", "tag_slug": "bitcoin"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+            markets = data if isinstance(data, list) else data.get("markets", [])
+            log.info(f"[Gamma/bitcoin] {len(markets)} mercados. Primeiros: {[m.get('question','')[:40] for m in markets[:5]]}")
+            for m in markets:
+                if _is_btc_5min(m.get("question", "").lower(), m.get("slug", "").lower()):
+                    return _parse_market(m)
+        except Exception as e:
+            log.debug(f"Gamma bitcoin tag failed: {e}")
+
+        log.info("Nenhum mercado BTC 5-min ativo encontrado — aguardando 30s")
         return None
     except Exception as e:
         log.error(f"get_active_btc_5min_market error: {e}")
@@ -101,11 +108,12 @@ async def get_active_btc_5min_market(session: aiohttp.ClientSession) -> Optional
 
 
 def _is_btc_5min(question: str, slug: str) -> bool:
-    """Verifica se o mercado é um BTC de 5 minutos."""
-    is_btc = any(x in question or x in slug for x in ["btc", "bitcoin"])
-    is_5min = any(x in question or x in slug for x in [
+    """Verifica se é o mercado BTC 5 Minute Up or Down."""
+    combined = question + " " + slug
+    is_btc = any(x in combined for x in ["btc", "bitcoin"])
+    is_5min = any(x in combined for x in [
         "5-minute", "5 minute", "5min", "five-minute", "five minute",
-        "5-min", "5 min",
+        "5-min", "5 min", "up or down",
     ])
     return is_btc and is_5min
 
@@ -162,33 +170,31 @@ def _extract_price_to_beat(question: str) -> Optional[float]:
 # ──────────────────────────────────────────────────────────────
 
 async def list_crypto_markets(session: aiohttp.ClientSession, limit: int = 20) -> list:
-    """Busca mercados ativos — sem filtro de tag, para diagnóstico real."""
+    """Busca mercados Bitcoin ativos — para diagnóstico."""
     results = []
     try:
-        # CLOB API
-        async with session.get(
-            f"{CLOB_API}/markets",
-            params={"active": "true", "closed": "false", "limit": limit},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            data = await resp.json()
-        clob = data if isinstance(data, list) else data.get("data", [])
-        results += [f"[CLOB] {m.get('question', m.get('market_slug', '?'))}" for m in clob[:10]]
-    except Exception as e:
-        results.append(f"[CLOB erro] {e}")
-
-    try:
-        # Gamma API sem filtro
         async with session.get(
             f"{GAMMA_API}/markets",
-            params={"active": "true", "closed": "false", "limit": limit},
+            params={"active": "true", "closed": "false", "limit": limit, "tag_slug": "bitcoin"},
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             data = await resp.json()
-        gamma = data if isinstance(data, list) else data.get("markets", [])
-        results += [f"[Gamma] {m.get('question', '?')}" for m in gamma[:10]]
+        markets = data if isinstance(data, list) else data.get("markets", [])
+        results += [f"[Bitcoin] {m.get('question', '?')}" for m in markets[:10]]
     except Exception as e:
-        results.append(f"[Gamma erro] {e}")
+        results.append(f"[Bitcoin erro] {e}")
+
+    try:
+        async with session.get(
+            f"{GAMMA_API}/events",
+            params={"active": "true", "closed": "false", "limit": 10, "_q": "BTC 5"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            data = await resp.json()
+        events = data if isinstance(data, list) else data.get("events", [])
+        results += [f"[Event] {e.get('title', e.get('question', '?'))}" for e in events[:5]]
+    except Exception as e:
+        results.append(f"[Events erro] {e}")
 
     return results
 
