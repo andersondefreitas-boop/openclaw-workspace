@@ -18,3 +18,9 @@ node_modules/
 # Logs
 *.log
 .git/
+
+# Build output
+dist/
+
+# Local npm metadata in this dependency-free static app
+package-lock.json
