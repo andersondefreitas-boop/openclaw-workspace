@@ -1,11 +1,12 @@
 {
-  "name": "openclaw-workspace",
+  "name": "anestesia-app",
   "version": "1.0.0",
-  "description": "Workspace OpenClaw for Railway",
+  "private": true,
+  "description": "Sistema de gestão de consultas pré-anestésicas",
+  "type": "module",
   "scripts": {
-    "start": "openclaw gateway start"
-  },
-  "dependencies": {
-    "openclaw": "latest"
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "node scripts/build.js"
   }
 }
